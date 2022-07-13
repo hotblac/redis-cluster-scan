@@ -7,6 +7,7 @@ import redis.clients.jedis.resps.ScanResult;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.apache.commons.lang3.RandomStringUtils.randomAlphanumeric;
 
@@ -86,12 +87,16 @@ public class RedisClusterScanDemo {
      * Merge a List of count arrays to a single array
      */
     private long[] zip(List<long[]> results) {
-        long[] summedResults = new long[10];
-        for (int i=0; i<10; i++) {
-            final int index = i; // Final required for stream
-            summedResults[i] = results.stream().mapToLong(result -> result[index]).sum();
-        }
-        return summedResults;
+        return IntStream.range(0, 10)
+                .mapToLong(i -> sum(results, i))
+                .toArray();
+    }
+
+    /**
+     * Sum all values at index i of given arrays
+     */
+    private long sum(List<long[]> results, int i) {
+        return results.stream().mapToLong(result -> result[i]).sum();
     }
 
     /**
@@ -100,14 +105,11 @@ public class RedisClusterScanDemo {
      * @return Array of size 10 (0-9) where each array index contains the count of keys beginning with that digit.
      */
     private long[] firstDigitCount(List<String> keys) {
-        long[] characterCounts = new long[10];
         final int firstDigitIndex = KEY_PREFIX.length();
         Map<Character, Long> characterCountMap = keys.stream()
                 .collect(Collectors.groupingBy(k -> k.charAt(firstDigitIndex), Collectors.counting()));
-        for(int i=0; i<10; i++) {
-            characterCounts[i] = characterCountMap.getOrDefault(Character.forDigit(i, 10), 0L);
-        }
-        return characterCounts;
-
+        return IntStream.range(0, 10)
+                .mapToLong(i -> characterCountMap.getOrDefault(Character.forDigit(i, 10), 0L))
+                .toArray();
     }
 }
