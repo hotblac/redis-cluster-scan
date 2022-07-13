@@ -6,6 +6,7 @@ import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.resps.ScanResult;
 
 import java.util.*;
+import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -56,49 +57,53 @@ public class RedisClusterScanDemo {
     }
 
     private void scanAllNodes(JedisCluster cluster) {
-        List<long[]> results = new ArrayList<>();
+        long[] results = new long[10];
         long keysScanned = 0;
         for (ConnectionPool node : cluster.getClusterNodes().values()) {
             try (Jedis j = new Jedis(node.getResource())) {
-                long[] result = scan(j, this::firstDigitCount, this::zip);
-                results.add(result);
+                long[] result = scan(j, this::firstDigitCount, new long[10], this::zipSum);
+                results = zipSum(results, result);
                 keysScanned += Arrays.stream(result).sum();
             }
             System.out.println("Keys scanned: " + keysScanned);
         }
 
-        long[] finalResult = zip(results);
-        System.out.println(Arrays.toString(finalResult));
+        System.out.println(Arrays.toString(results));
     }
 
-    private <T, R> R scan(Jedis node, Function<List<String>, T> keyFunction, Function<List<T>, R> mergeFunction) {
-        List<T> results = new ArrayList<>();
+    /**
+     * Scan keys on a single Redis node and return accumulated result of a function on the keys
+     * @param node Jedis
+     * @param keyFunction function to be performed on keys
+     * @param identity identity for accumulator
+     * @param accumulator combine two keyFunction results into an accumulated result
+     * @return results accumulated over complete scan of redis keys
+     * @param <T> return type
+     */
+    private <T> T scan(Jedis node, Function<List<String>, T> keyFunction, T identity, BinaryOperator<T> accumulator) {
+        T accumulatedResult = identity;
         ScanParams scanParams = new ScanParams().count(SCAN_BATCH);
         String cursor = ScanParams.SCAN_POINTER_START;
         do {
             ScanResult<String> scanResult = node.scan(cursor, scanParams);
             List<String> keys = scanResult.getResult();
-            results.add(keyFunction.apply(keys));
+            T thisResult = keyFunction.apply(keys);
+            accumulatedResult = accumulator.apply(accumulatedResult, thisResult);
             cursor = scanResult.getCursor();
         } while (!cursor.equals(ScanParams.SCAN_POINTER_START));
-        return mergeFunction.apply(results);
+        return accumulatedResult;
     }
 
     /**
-     * Merge a List of count arrays to a single array
+     * Zip two arrays with sum function.
+     * zipSum([1, 2, 3], [5, 5, 5]) -> [6, 7, 8]
      */
-    private long[] zip(List<long[]> results) {
+    private long[] zipSum(long[] result1, long[] result2) {
         return IntStream.range(0, 10)
-                .mapToLong(i -> sum(results, i))
+                .mapToLong(i -> result1[i] + result2[i])
                 .toArray();
     }
 
-    /**
-     * Sum all values at index i of given arrays
-     */
-    private long sum(List<long[]> results, int i) {
-        return results.stream().mapToLong(result -> result[i]).sum();
-    }
 
     /**
      * Count of first digits of given keys.
