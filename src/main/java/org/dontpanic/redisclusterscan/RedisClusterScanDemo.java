@@ -32,6 +32,7 @@ public class RedisClusterScanDemo {
     public void runDemo() {
         try (JedisCluster cluster = new JedisCluster(JEDIS_CLUSTER_NODES)) {
             //initData(cluster);
+            //scanBroken(cluster); // Fails with: Cluster mode only supports SCAN command with MATCH pattern containing hash-tag ( curly-brackets enclosed string )
             scanAllNodes(cluster);
         }
     }
@@ -49,11 +50,12 @@ public class RedisClusterScanDemo {
     private void scanBroken(JedisCluster cluster) {
         ScanParams scanParams = new ScanParams().count(SCAN_BATCH);
         String cursor = ScanParams.SCAN_POINTER_START;
-        ScanResult<String> scanResult = cluster.scan(cursor, scanParams);
-        while(!scanResult.isCompleteIteration()) {
+        do {
+            ScanResult<String> scanResult = cluster.scan(cursor, scanParams);
             List<String> keys = scanResult.getResult();
             System.out.println("First key in batch: "  + keys.get(0));
-        }
+            cursor = scanResult.getCursor();
+        } while (!cursor.equals(ScanParams.SCAN_POINTER_START));
     }
 
     private void scanAllNodes(JedisCluster cluster) {
