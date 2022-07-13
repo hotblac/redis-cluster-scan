@@ -6,6 +6,7 @@ import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.resps.ScanResult;
 
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -59,7 +60,7 @@ public class RedisClusterScanDemo {
         long keysScanned = 0;
         for (ConnectionPool node : cluster.getClusterNodes().values()) {
             try (Jedis j = new Jedis(node.getResource())) {
-                long[] result = scan(j);
+                long[] result = scan(j, this::firstDigitCount, this::zip);
                 results.add(result);
                 keysScanned += Arrays.stream(result).sum();
             }
@@ -70,17 +71,17 @@ public class RedisClusterScanDemo {
         System.out.println(Arrays.toString(finalResult));
     }
 
-    private long[] scan(Jedis node) {
-        List<long[]> results = new ArrayList<>();
+    private <T, R> R scan(Jedis node, Function<List<String>, T> keyFunction, Function<List<T>, R> mergeFunction) {
+        List<T> results = new ArrayList<>();
         ScanParams scanParams = new ScanParams().count(SCAN_BATCH);
         String cursor = ScanParams.SCAN_POINTER_START;
         do {
             ScanResult<String> scanResult = node.scan(cursor, scanParams);
             List<String> keys = scanResult.getResult();
-            results.add(firstDigitCount(keys));
+            results.add(keyFunction.apply(keys));
             cursor = scanResult.getCursor();
         } while (!cursor.equals(ScanParams.SCAN_POINTER_START));
-        return zip(results);
+        return mergeFunction.apply(results);
     }
 
     /**
