@@ -5,13 +5,16 @@ import redis.clients.jedis.*;
 import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.resps.ScanResult;
 
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import static org.apache.commons.lang3.RandomStringUtils.randomAlphanumeric;
 
 public class RedisClusterScanDemo {
 
     private static final long NUM_KEYS = 1_000_000;
     private static final int SCAN_BATCH = 1000;
+    private static final String KEY_PREFIX = "key:";
     private static final Set<HostAndPort> JEDIS_CLUSTER_NODES = Set.of(
             new HostAndPort("127.0.0.1", 6371),
             new HostAndPort("127.0.0.1", 6372),
@@ -25,7 +28,7 @@ public class RedisClusterScanDemo {
 
     public void runDemo() {
         try (JedisCluster cluster = new JedisCluster(JEDIS_CLUSTER_NODES)) {
-            initData(cluster);
+            //initData(cluster);
             scanAllNodes(cluster);
         }
     }
@@ -34,7 +37,7 @@ public class RedisClusterScanDemo {
         StopWatch timer = StopWatch.createStarted();
         System.out.println("Adding " + NUM_KEYS + " keys...");
         for (int i=0; i<NUM_KEYS; i++) {
-            cluster.set("key:" + i, "value:" + i);
+            cluster.set(KEY_PREFIX + i, randomAlphanumeric(12));
         }
         timer.stop();
         System.out.println("Added " + NUM_KEYS + " keys in " + timer.formatTime());
@@ -51,28 +54,60 @@ public class RedisClusterScanDemo {
     }
 
     private void scanAllNodes(JedisCluster cluster) {
-        int keysScanned = 0;
+        List<long[]> results = new ArrayList<>();
+        long keysScanned = 0;
         for (ConnectionPool node : cluster.getClusterNodes().values()) {
             try (Jedis j = new Jedis(node.getResource())) {
-                int nodeKeys = scanNode(j);
-                keysScanned += nodeKeys;
+                long[] result = scan(j);
+                results.add(result);
+                keysScanned += Arrays.stream(result).sum();
             }
             System.out.println("Keys scanned: " + keysScanned);
         }
 
+        long[] finalResult = zip(results);
+        System.out.println(Arrays.toString(finalResult));
     }
 
-    private int scanNode(Jedis node) {
-        int keysScanned = 0;
+    private long[] scan(Jedis node) {
+        List<long[]> results = new ArrayList<>();
         ScanParams scanParams = new ScanParams().count(SCAN_BATCH);
         String cursor = ScanParams.SCAN_POINTER_START;
         do {
             ScanResult<String> scanResult = node.scan(cursor, scanParams);
             List<String> keys = scanResult.getResult();
-            keysScanned += keys.size();
-            System.out.println("Scanned " + keys.size());
+            results.add(firstDigitCount(keys));
             cursor = scanResult.getCursor();
         } while (!cursor.equals(ScanParams.SCAN_POINTER_START));
-        return keysScanned;
+        return zip(results);
+    }
+
+    /**
+     * Merge a List of count arrays to a single array
+     */
+    private long[] zip(List<long[]> results) {
+        long[] summedResults = new long[10];
+        for (int i=0; i<10; i++) {
+            final int index = i; // Final required for stream
+            summedResults[i] = results.stream().mapToLong(result -> result[index]).sum();
+        }
+        return summedResults;
+    }
+
+    /**
+     * Count of first digits of given keys.
+     * @param keys prefixed by {@link #KEY_PREFIX}
+     * @return Array of size 10 (0-9) where each array index contains the count of keys beginning with that digit.
+     */
+    private long[] firstDigitCount(List<String> keys) {
+        long[] characterCounts = new long[10];
+        final int firstDigitIndex = KEY_PREFIX.length();
+        Map<Character, Long> characterCountMap = keys.stream()
+                .collect(Collectors.groupingBy(k -> k.charAt(firstDigitIndex), Collectors.counting()));
+        for(int i=0; i<10; i++) {
+            characterCounts[i] = characterCountMap.getOrDefault(Character.forDigit(i, 10), 0L);
+        }
+        return characterCounts;
+
     }
 }
