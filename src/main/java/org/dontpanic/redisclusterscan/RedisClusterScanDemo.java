@@ -31,9 +31,11 @@ public class RedisClusterScanDemo {
 
     public void runDemo() {
         try (JedisCluster cluster = new JedisCluster(JEDIS_CLUSTER_NODES)) {
-            //initData(cluster);
+            initData(cluster);
             //scanBroken(cluster); // Fails with: Cluster mode only supports SCAN command with MATCH pattern containing hash-tag ( curly-brackets enclosed string )
-            scanAllNodes(cluster);
+            long[] results = scanAllNodes(cluster, this::firstDigitCount, new long[10], this::zipSum);
+            System.out.println(Arrays.toString(results));
+
         }
     }
 
@@ -58,19 +60,15 @@ public class RedisClusterScanDemo {
         } while (!cursor.equals(ScanParams.SCAN_POINTER_START));
     }
 
-    private void scanAllNodes(JedisCluster cluster) {
-        long[] results = new long[10];
-        long keysScanned = 0;
+    private <T> T scanAllNodes(JedisCluster cluster, Function<List<String>, T> keyFunction, T identity, BinaryOperator<T> accumulator) {
+        T accumulatedResult = identity;
         for (ConnectionPool node : cluster.getClusterNodes().values()) {
             try (Jedis j = new Jedis(node.getResource())) {
-                long[] result = scan(j, this::firstDigitCount, new long[10], this::zipSum);
-                results = zipSum(results, result);
-                keysScanned += Arrays.stream(result).sum();
+                T result = scan(j, keyFunction, identity, accumulator);
+                accumulatedResult = accumulator.apply(accumulatedResult, result);
             }
-            System.out.println("Keys scanned: " + keysScanned);
         }
-
-        System.out.println(Arrays.toString(results));
+        return accumulatedResult;
     }
 
     /**
