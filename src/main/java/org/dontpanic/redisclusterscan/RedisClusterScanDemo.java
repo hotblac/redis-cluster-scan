@@ -6,6 +6,10 @@ import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.resps.ScanResult;
 
 import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -23,19 +27,21 @@ public class RedisClusterScanDemo {
             new HostAndPort("127.0.0.1", 6372),
             new HostAndPort("127.0.0.1", 6373)
     );
+    private final ExecutorService executorService = Executors.newFixedThreadPool(JEDIS_CLUSTER_NODES.size());
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws ExecutionException, InterruptedException {
         RedisClusterScanDemo demo = new RedisClusterScanDemo();
         demo.runDemo();
     }
 
-    public void runDemo() {
+    public void runDemo() throws ExecutionException, InterruptedException {
         try (JedisCluster cluster = new JedisCluster(JEDIS_CLUSTER_NODES)) {
-            initData(cluster);
+            //initData(cluster);
             //scanBroken(cluster); // Fails with: Cluster mode only supports SCAN command with MATCH pattern containing hash-tag ( curly-brackets enclosed string )
             long[] results = scanAllNodes(cluster, this::firstDigitCount, new long[10], this::zipSum);
             System.out.println(Arrays.toString(results));
-
+        } finally {
+            executorService.shutdown();
         }
     }
 
@@ -60,14 +66,27 @@ public class RedisClusterScanDemo {
         } while (!cursor.equals(ScanParams.SCAN_POINTER_START));
     }
 
-    private <T> T scanAllNodes(JedisCluster cluster, Function<List<String>, T> keyFunction, T identity, BinaryOperator<T> accumulator) {
+    private <T> T scanAllNodes(JedisCluster cluster, Function<List<String>, T> keyFunction, T identity, BinaryOperator<T> accumulator) throws ExecutionException, InterruptedException {
+        StopWatch timer = StopWatch.createStarted();
         T accumulatedResult = identity;
+        List<Future<T>> results = new ArrayList<>();
+
+        // Scan all nodes in parallel
         for (ConnectionPool node : cluster.getClusterNodes().values()) {
             try (Jedis j = new Jedis(node.getResource())) {
-                T result = scan(j, keyFunction, identity, accumulator);
-                accumulatedResult = accumulator.apply(accumulatedResult, result);
+                Future<T> result = executorService.submit(() -> scan(j, keyFunction, identity, accumulator));
+                results.add(result);
             }
         }
+
+        // Await and accumulate all scan results
+        for (Future<T> result: results) {
+            accumulatedResult = accumulator.apply(accumulatedResult, result.get());
+        }
+
+        timer.stop();
+        System.out.println("Scanned " + NUM_KEYS + " keys in " + timer.formatTime());
+
         return accumulatedResult;
     }
 
