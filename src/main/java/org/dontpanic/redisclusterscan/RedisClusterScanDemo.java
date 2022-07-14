@@ -6,14 +6,12 @@ import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.resps.ScanResult;
 
 import java.util.*;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.LongStream;
 
 import static org.apache.commons.lang3.RandomStringUtils.randomAlphanumeric;
 
@@ -27,7 +25,7 @@ public class RedisClusterScanDemo {
             new HostAndPort("127.0.0.1", 6372),
             new HostAndPort("127.0.0.1", 6373)
     );
-    private final ExecutorService executorService = Executors.newFixedThreadPool(JEDIS_CLUSTER_NODES.size());
+    private final ExecutorService scanExecutorService = Executors.newFixedThreadPool(JEDIS_CLUSTER_NODES.size());
 
     public static void main(String[] args) throws ExecutionException, InterruptedException {
         RedisClusterScanDemo demo = new RedisClusterScanDemo();
@@ -36,21 +34,19 @@ public class RedisClusterScanDemo {
 
     public void runDemo() throws ExecutionException, InterruptedException {
         try (JedisCluster cluster = new JedisCluster(JEDIS_CLUSTER_NODES)) {
-            //initData(cluster);
+            initData(cluster);
             //scanBroken(cluster); // Fails with: Cluster mode only supports SCAN command with MATCH pattern containing hash-tag ( curly-brackets enclosed string )
             long[] results = scanAllNodes(cluster, this::firstDigitCount, new long[10], this::zipSum);
             System.out.println(Arrays.toString(results));
         } finally {
-            executorService.shutdown();
+            scanExecutorService.shutdown();
         }
     }
 
     private void initData(JedisCluster cluster) {
         StopWatch timer = StopWatch.createStarted();
         System.out.println("Adding " + NUM_KEYS + " keys...");
-        for (int i=0; i<NUM_KEYS; i++) {
-            cluster.set(KEY_PREFIX + i, randomAlphanumeric(12));
-        }
+        LongStream.range(0, NUM_KEYS).parallel().forEach(i -> cluster.set(KEY_PREFIX + i, randomAlphanumeric(12)));
         timer.stop();
         System.out.println("Added " + NUM_KEYS + " keys in " + timer.formatTime());
     }
@@ -74,7 +70,7 @@ public class RedisClusterScanDemo {
         // Scan all nodes in parallel
         for (ConnectionPool node : cluster.getClusterNodes().values()) {
             try (Jedis j = new Jedis(node.getResource())) {
-                Future<T> result = executorService.submit(() -> scan(j, keyFunction, identity, accumulator));
+                Future<T> result = scanExecutorService.submit(() -> scan(j, keyFunction, identity, accumulator));
                 results.add(result);
             }
         }
