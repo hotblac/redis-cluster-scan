@@ -46,7 +46,12 @@ public class RedisClusterScanDemo {
 
             // Example 2: Find values associated with all keys that are a prime number
             List<String> primeKeys = scanAllNodes(cluster, this::primeKeys, new ArrayList<>(), this::joinList);
-            System.out.println(String.join(",", primeKeys));
+            StopWatch timer = StopWatch.createStarted();
+            List<String> values = primeKeys.parallelStream().map(cluster::get).collect(Collectors.toList());
+            timer.stop();
+            System.out.println("Retrieved " + values.size() + " values in " + timer.formatTime());
+            //values.forEach(System.out::println);
+
         } finally {
             scanExecutorService.shutdown();
         }
