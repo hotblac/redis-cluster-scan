@@ -1,6 +1,8 @@
 package org.dontpanic.redisclusterscan;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
+import org.apache.commons.math3.primes.Primes;
 import redis.clients.jedis.*;
 import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.resps.ScanResult;
@@ -12,6 +14,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.LongStream;
+import java.util.stream.Stream;
 
 import static org.apache.commons.lang3.RandomStringUtils.randomAlphanumeric;
 
@@ -36,8 +39,14 @@ public class RedisClusterScanDemo {
         try (JedisCluster cluster = new JedisCluster(JEDIS_CLUSTER_NODES)) {
             initData(cluster);
             //scanBroken(cluster); // Fails with: Cluster mode only supports SCAN command with MATCH pattern containing hash-tag ( curly-brackets enclosed string )
+
+            // Example 1: Determine frequency of first digit of all keys
             long[] results = scanAllNodes(cluster, this::firstDigitCount, new long[10], this::zipSum);
             System.out.println(Arrays.toString(results));
+
+            // Example 2: Find values associated with all keys that are a prime number
+            List<String> primeKeys = scanAllNodes(cluster, this::primeKeys, new ArrayList<>(), this::joinList);
+            System.out.println(String.join(",", primeKeys));
         } finally {
             scanExecutorService.shutdown();
         }
@@ -119,6 +128,10 @@ public class RedisClusterScanDemo {
                 .toArray();
     }
 
+    private <T> List<T> joinList(List<T> l1, List<T> l2) {
+        return Stream.of(l1, l2).flatMap(List::stream).collect(Collectors.toList());
+    }
+
 
     /**
      * Count of first digits of given keys.
@@ -132,5 +145,13 @@ public class RedisClusterScanDemo {
         return IntStream.range(0, 10)
                 .mapToLong(i -> characterCountMap.getOrDefault(Character.forDigit(i, 10), 0L))
                 .toArray();
+    }
+
+    private List<String> primeKeys(List<String> keys) {
+        return keys.stream().filter(this::isPrimeKey).collect(Collectors.toList());
+    }
+
+    private boolean isPrimeKey(String key) {
+        return Primes.isPrime(Integer.parseInt(StringUtils.removeStart(key, KEY_PREFIX)));
     }
 }
